@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import confetti from "canvas-confetti";
 import { DndContext, useDraggable, useDroppable, DragEndEvent } from '@dnd-kit/core';
 
@@ -25,11 +25,11 @@ interface TranscriptionResult {
   filename: string;
   transcription: string;
   summary: string;
-  action_items: string[]; // 追加: AIが提案するタスク
+  action_items: string[];
 }
 
 // --- 効果音関数 ---
-const playSound = (type: "success" | "drop" | "pop") => {
+const playSound = (type: "success" | "drop" | "pop" | "cancel") => {
   const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
   if (!AudioContext) return;
   const ctx = new AudioContext();
@@ -54,6 +54,14 @@ const playSound = (type: "success" | "drop" | "pop") => {
     gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
     osc.start();
     osc.stop(ctx.currentTime + 0.05);
+  } else if (type === "cancel") {
+    // キャンセル音: 低めの音
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(150, ctx.currentTime);
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
   } else {
     osc.type = "triangle";
     osc.frequency.setValueAtTime(300, ctx.currentTime);
@@ -71,9 +79,17 @@ export default function Home() {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   
+  // 議事録・設定関連
   const [file, setFile] = useState<File | null>(null);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  
+  // 新機能用のState
+  const [mode, setMode] = useState<"summary" | "proofread">("summary");
+  const [summaryLevel, setSummaryLevel] = useState<"short" | "standard" | "long">("standard");
+  
+  // キャンセル制御用
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchTasks();
@@ -163,16 +179,31 @@ export default function Home() {
     if (e.target.files && e.target.files[0]) setFile(e.target.files[0]);
   };
 
+  // --- 音声アップロード処理（中断機能付き） ---
   const uploadAudio = async () => {
     if (!file) return;
+    
+    // 前の処理があればキャンセル
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // 新しいコントローラーを作成
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsProcessingAudio(true);
     const formData = new FormData();
     formData.append("file", file);
+    // 設定値を送信
+    formData.append("mode", mode);
+    formData.append("summary_level", summaryLevel);
 
     try {
       const res = await fetch(`${API_URL}/upload-audio/`, {
         method: "POST",
         body: formData,
+        signal: controller.signal, // ここでシグナルを渡す
       });
       
       if (!res.ok) {
@@ -182,11 +213,27 @@ export default function Home() {
       const data = await res.json();
       setTranscriptionResult(data);
       playSound("success");
-    } catch (error) {
-      console.error("Error uploading audio:", error);
-      alert("アップロードに失敗しました。サーバーログを確認してください。(python-multipartはインストール済みですか？)");
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('処理が中断されました');
+        // 中断時は何もしないか、メッセージを出す
+      } else {
+        console.error("Error uploading audio:", error);
+        alert("エラーが発生しました。");
+      }
     } finally {
+      // 成功しても中断してもローディング終了
       setIsProcessingAudio(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  // --- 中断ボタンの処理 ---
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      playSound("cancel");
+      setIsProcessingAudio(false); // 強制的にローディングを解除
     }
   };
 
@@ -246,44 +293,102 @@ export default function Home() {
 
         <main className="max-w-7xl mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* 左カラム: 議事録 & AIタスク提案 */}
+          {/* 左カラム: 議事録設定 & アップロード */}
           <section className="lg:col-span-4 space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-purple-600">
                 <span>🎙️</span> 会議・議事録
               </h2>
+              
+              {/* --- 設定パネル --- */}
+              <div className="mb-6 space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">処理モード</label>
+                  <div className="flex bg-slate-100 p-1 rounded-lg">
+                    <button
+                      onClick={() => setMode("summary")}
+                      className={`flex-1 py-2 text-sm font-bold rounded-md transition ${mode === "summary" ? "bg-white text-purple-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                    >
+                      要約作成
+                    </button>
+                    <button
+                      onClick={() => setMode("proofread")}
+                      className={`flex-1 py-2 text-sm font-bold rounded-md transition ${mode === "proofread" ? "bg-white text-purple-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                    >
+                      文字起こし修正
+                    </button>
+                  </div>
+                </div>
+
+                {/* 要約レベル選択（要約モード時のみ表示） */}
+                {mode === "summary" && (
+                  <div className="animate-fade-in">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">要約レベル</label>
+                    <div className="flex gap-2">
+                      {["short", "standard", "long"].map((level) => (
+                        <button
+                          key={level}
+                          onClick={() => setSummaryLevel(level as any)}
+                          className={`flex-1 py-1.5 px-2 text-xs font-bold rounded border transition ${
+                            summaryLevel === level 
+                              ? "bg-purple-50 border-purple-200 text-purple-700" 
+                              : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                          }`}
+                        >
+                          {level === "short" ? "簡潔" : level === "standard" ? "標準" : "詳細"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* アップロードエリア */}
               <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center hover:bg-purple-50 hover:border-purple-300 transition cursor-pointer group relative">
                 <input type="file" accept="audio/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" id="audio-upload"/>
                 <div className="text-3xl mb-2 group-hover:scale-110 transition">📂</div>
                 <div className="text-sm text-slate-500 font-medium">{file ? file.name : "音声をアップロード"}</div>
               </div>
               
-              <button 
-                onClick={uploadAudio} 
-                disabled={!file || isProcessingAudio} 
-                className="mt-4 w-full bg-purple-600 text-white py-3 rounded-xl font-bold hover:bg-purple-700 transition shadow-lg shadow-purple-200 disabled:opacity-50 disabled:shadow-none"
-              >
-                {isProcessingAudio ? "AI解析中..." : "議事録を作成"}
-              </button>
+              {isProcessingAudio ? (
+                <button 
+                  onClick={handleCancel}
+                  className="mt-4 w-full bg-red-100 text-red-600 py-3 rounded-xl font-bold hover:bg-red-200 transition flex items-center justify-center gap-2"
+                >
+                  <span className="animate-pulse">🛑</span> 処理を中断する
+                </button>
+              ) : (
+                <button 
+                  onClick={uploadAudio} 
+                  disabled={!file} 
+                  className="mt-4 w-full bg-purple-600 text-white py-3 rounded-xl font-bold hover:bg-purple-700 transition shadow-lg shadow-purple-200 disabled:opacity-50 disabled:shadow-none"
+                >
+                  実行する
+                </button>
+              )}
             </div>
 
             {transcriptionResult && (
               <div className="animate-fade-in-up space-y-4">
-                {/* 要約 */}
+                {/* 結果表示 */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                  <h3 className="font-bold text-lg mb-3 border-b pb-2">📝 要約結果</h3>
-                  <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+                  <h3 className="font-bold text-lg mb-3 border-b pb-2 flex justify-between items-center">
+                    <span>{mode === "summary" ? "📝 要約結果" : "✨ 修正結果"}</span>
+                    <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                      {mode === "summary" ? `Level: ${summaryLevel}` : "Proofread"}
+                    </span>
+                  </h3>
+                  <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
                     {transcriptionResult.summary}
                   </div>
                 </div>
 
-                {/* AI提案タスク */}
+                {/* AI提案タスク (要約モード時のみ) */}
                 {transcriptionResult.action_items.length > 0 && (
                   <div className="bg-gradient-to-br from-purple-50 to-blue-50 p-6 rounded-2xl shadow-sm border border-purple-100">
                     <h3 className="font-bold text-lg mb-3 flex items-center gap-2 text-purple-800">
                       <span>🤖</span> AI提案タスク
                     </h3>
-                    <p className="text-xs text-purple-600 mb-3">会議から抽出されたアクションです。追加ボタンでボードに登録できます。</p>
                     <div className="space-y-2">
                       {transcriptionResult.action_items.map((item, idx) => (
                         <div key={idx} className="bg-white p-3 rounded-lg border border-purple-100 flex justify-between items-center shadow-sm">
@@ -352,6 +457,7 @@ export default function Home() {
   );
 }
 
+// DnDコンポーネント (変更なし)
 function DroppableColumn({ id, title, count, children, bgColor }: { id: string, title: string, count: number, children: React.ReactNode, bgColor: string }) {
   const { setNodeRef } = useDroppable({ id });
   return (

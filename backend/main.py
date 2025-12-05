@@ -3,11 +3,10 @@ import shutil
 import json
 from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from openai import OpenAI
-# ★追加: .envファイルを読み込むためのライブラリ
 from dotenv import load_dotenv
 
 import crud
@@ -15,7 +14,6 @@ import models
 import schemas
 from database import SessionLocal, engine
 
-# ★追加: 環境変数を読み込む（これが.envの中身をプログラムに取り込みます）
 load_dotenv()
 
 models.Base.metadata.create_all(bind=engine)
@@ -39,7 +37,6 @@ def get_db():
     finally:
         db.close()
 
-# 環境変数からAPIキーを取得
 api_key = os.getenv("OPENAI_API_KEY")
 client = None
 
@@ -75,7 +72,11 @@ def get_user_stats(db: Session = Depends(get_db)):
 
 # --- 議事録＆タスク抽出API ---
 @app.post("/upload-audio/")
-async def upload_audio(file: UploadFile = File(...)):
+async def upload_audio(
+    file: UploadFile = File(...),
+    mode: str = Form("summary"),       # "summary" (要約) or "proofread" (文字起こし修正)
+    summary_level: str = Form("standard") # "short", "standard", "long"
+):
     temp_dir = "temp_uploads"
     os.makedirs(temp_dir, exist_ok=True)
     temp_file_path = f"{temp_dir}/{file.filename}"
@@ -84,13 +85,12 @@ async def upload_audio(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # デモモード（APIキーなし）
         if not client:
             return {
                 "filename": file.filename,
-                "transcription": "【デモ】APIキー未設定のためダミーを表示中。",
-                "summary": "これはデモ用の要約です。APIキーを設定すると、ここにAIによる要約が表示されます。",
-                "action_items": ["APIキーを設定する", "マイクのテストを行う", "チームに共有する"]
+                "transcription": "【デモ】APIキー未設定",
+                "summary": "APIキーを設定してください。",
+                "action_items": []
             }
 
         # 1. Whisperで文字起こし
@@ -101,18 +101,42 @@ async def upload_audio(file: UploadFile = File(...)):
             )
         transcribed_text = transcript_response.text
 
-        # 2. GPTで要約とタスク抽出（JSONモード指定）
-        system_prompt = """
-        あなたは会議の書記です。入力された音声テキストから、以下のJSON形式でデータを出力してください。
+        # 2. GPTへの指示を作成（モードとレベルに応じて分岐）
+        base_instruction = "あなたは優秀な会議の書記です。入力された音声テキストから、以下のJSON形式でデータを出力してください。"
+        
+        json_format_instruction = """
         必ず有効なJSONのみを返してください。Markdown記法は不要です。
-        
         {
-            "summary": "会議の要約（箇条書きで分かりやすく）",
-            "action_items": ["タスク1", "タスク2", "タスク3"]
+            "summary": "出力テキスト",
+            "action_items": ["タスク1", "タスク2"]
         }
-        
-        action_itemsには、誰かがやるべき具体的な作業を抽出してください。なければ空配列にしてください。
         """
+
+        # モード別のプロンプト構築
+        if mode == "proofread":
+            # 文字起こし修正モード
+            specific_instruction = """
+            【指示】
+            入力されたテキストの内容を要約せず、そのまま**「誤字脱字の修正」「てにをはの修正」「読みやすさの改善」**のみを行ってください。
+            発言内容は削除せず、日本語として自然な文章に整えてください。
+            "summary"フィールドに修正後の全文を入れてください。
+            """
+        else:
+            # 要約モード (summary_levelで調整)
+            length_instruction = "標準的な長さで要約してください。"
+            if summary_level == "short":
+                length_instruction = "要点を絞り、非常に簡潔に（3行程度で）要約してください。"
+            elif summary_level == "long":
+                length_instruction = "詳細は省かず、詳細な情報を残して長めに要約してください。"
+            
+            specific_instruction = f"""
+            【指示】
+            入力されたテキストを議事録として要約してください。
+            **{length_instruction}**
+            "summary"フィールドに要約を入れてください。
+            """
+
+        system_prompt = f"{base_instruction}\n{specific_instruction}\n{json_format_instruction}\naction_itemsには、誰かがやるべき具体的な作業を抽出してください。"
 
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -120,7 +144,7 @@ async def upload_audio(file: UploadFile = File(...)):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": transcribed_text}
             ],
-            response_format={"type": "json_object"} # JSONモードを強制
+            response_format={"type": "json_object"}
         )
         
         result_json_str = completion.choices[0].message.content
@@ -140,7 +164,7 @@ async def upload_audio(file: UploadFile = File(...)):
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
-# --- タスクAPI ---
+# --- タスクAPI (変更なし) ---
 @app.post("/tasks/", response_model=schemas.Task)
 def create_task(task: schemas.TaskCreate, db: Session = Depends(get_db)):
     return crud.create_task(db=db, task=task)
