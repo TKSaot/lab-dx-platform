@@ -209,7 +209,6 @@ export default function Home() {
     formData.append("mode", mode);
     formData.append("summary_level", summaryLevel);
 
-    // トーストの設定を変更：白背景で統一
     const loadingToastId = toast.loading("AIが音声を解析中...");
 
     try {
@@ -264,9 +263,27 @@ export default function Home() {
   const doingTasks = tasks.filter(t => t.status === 'doing');
   const doneTasks = tasks.filter(t => t.status === 'done');
 
+  // タスクレンダリング用のヘルパー関数
+  // すべてのステータスで削除ボタンを表示するために使用します
+  const renderTaskWithDelete = (task: Task) => (
+    <div key={task.id} className="relative group/item">
+      <DraggableTask task={task} />
+      <motion.button 
+        initial={{ opacity: 0 }} 
+        // モバイル対応: 常に少し見えるようにするか、タップで反応させる。今回はPCのホバーを基本としつつ、タップしやすいサイズに。
+        whileHover={{ opacity: 1, scale: 1.1 }} 
+        whileTap={{ scale: 0.9 }}
+        onClick={() => deleteTask(task.id)}
+        className="absolute top-2 right-2 text-slate-300 hover:text-red-500 text-xs p-1 bg-white/80 rounded shadow-sm z-10 opacity-0 group-hover/item:opacity-100 transition-opacity"
+        title="削除する"
+      >
+        🗑️
+      </motion.button>
+    </div>
+  );
+
   return (
     <DndContext onDragEnd={handleDragEnd}>
-      {/* 修正ポイント: 通知を右下(bottom-right)に戻しました */}
       <Toaster 
         position="bottom-right" 
         toastOptions={{ 
@@ -296,7 +313,6 @@ export default function Home() {
               {stats ? (
                 <div className="flex items-center gap-4 text-right">
                   <div>
-                    {/* Title -> 称号 */}
                     <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">称号</div>
                     <motion.div 
                       key={stats.title}
@@ -307,7 +323,6 @@ export default function Home() {
                     </motion.div>
                   </div>
                   <div>
-                    {/* Level -> レベル */}
                     <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">レベル</div>
                     <motion.div 
                       key={stats.level}
@@ -319,7 +334,6 @@ export default function Home() {
                   </div>
                 </div>
               ) : (
-                // Header Skeleton
                 <div className="flex gap-4 animate-pulse">
                   <div className="h-10 w-24 bg-slate-200 rounded"></div>
                   <div className="h-10 w-16 bg-slate-200 rounded"></div>
@@ -507,7 +521,6 @@ export default function Home() {
             </motion.form>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full min-h-[400px]">
-              {/* Skeleton Loading or Real Content */}
               {isLoading ? (
                 <>
                   {[1, 2, 3].map(i => (
@@ -523,28 +536,20 @@ export default function Home() {
               ) : (
                 <>
                   <DroppableColumn id="todo" title="未着手" count={todoTasks.length} bgColor="bg-slate-100">
-                    {todoTasks.map(task => <DraggableTask key={task.id} task={task} />)}
+                    <AnimatePresence>
+                      {todoTasks.map(task => renderTaskWithDelete(task))}
+                    </AnimatePresence>
                   </DroppableColumn>
 
                   <DroppableColumn id="doing" title="進行中" count={doingTasks.length} bgColor="bg-blue-50">
-                    {doingTasks.map(task => <DraggableTask key={task.id} task={task} />)}
+                    <AnimatePresence>
+                      {doingTasks.map(task => renderTaskWithDelete(task))}
+                    </AnimatePresence>
                   </DroppableColumn>
 
                   <DroppableColumn id="done" title="完了" count={doneTasks.length} bgColor="bg-green-50">
                     <AnimatePresence>
-                      {doneTasks.map(task => (
-                        <div key={task.id} className="relative">
-                           <DraggableTask task={task} />
-                           <motion.button 
-                              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                              whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
-                              onClick={() => deleteTask(task.id)}
-                              className="absolute top-2 right-2 text-red-400 hover:text-red-600 text-xs p-1 bg-white rounded shadow-sm z-10"
-                           >
-                             🗑️
-                           </motion.button>
-                        </div>
-                      ))}
+                      {doneTasks.map(task => renderTaskWithDelete(task))}
                     </AnimatePresence>
                   </DroppableColumn>
                 </>
@@ -580,7 +585,6 @@ function DroppableColumn({ id, title, count, children, bgColor }: { id: string, 
         </motion.span>
       </h3>
       {children}
-      {/* Empty -> タスクなし */}
       {count === 0 && <div className="h-full flex items-center justify-center text-slate-300 text-sm font-bold border-2 border-dashed border-slate-200 rounded-xl p-4">タスクなし</div>}
     </motion.div>
   );
