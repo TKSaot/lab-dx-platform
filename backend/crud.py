@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import models
 import schemas
 
@@ -8,19 +9,18 @@ def get_tasks(db: Session, skip: int = 0, limit: int = 100):
 
 # タスクの作成
 def create_task(db: Session, task: schemas.TaskCreate):
-    # 将来的にはタスクの難易度に応じてexpを変えるロジックをここに入れます
     db_task = models.Task(
         title=task.title,
         description=task.description,
         status=task.status,
-        exp=20  # 仮で固定の経験値を設定
+        exp=20  # タスク1つにつき20EXP（固定）
     )
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
     return db_task
 
-# タスクの削除（オプション機能）
+# タスクの削除
 def delete_task(db: Session, task_id: int):
     db_task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if db_task:
@@ -29,7 +29,7 @@ def delete_task(db: Session, task_id: int):
         return True
     return False
 
-# ステータスの更新（ドラッグ&ドロップ用）
+# ステータスの更新
 def update_task_status(db: Session, task_id: int, status: str):
     db_task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if db_task:
@@ -37,3 +37,9 @@ def update_task_status(db: Session, task_id: int, status: str):
         db.commit()
         db.refresh(db_task)
     return db_task
+
+# --- 追加: ゲーミフィケーション用 ---
+def get_total_exp(db: Session):
+    # ステータスが "done" のタスクのEXPを合計する
+    result = db.query(func.sum(models.Task.exp)).filter(models.Task.status == "done").scalar()
+    return result if result else 0

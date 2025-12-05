@@ -56,6 +56,29 @@ if api_key:
 def read_root():
     return {"message": "Lab DX Platform API is running!"}
 
+# --- 追加: ゲーミフィケーションAPI ---
+@app.get("/stats/")
+def get_user_stats(db: Session = Depends(get_db)):
+    """
+    現在の獲得経験値とレベルを計算して返す
+    """
+    total_exp = crud.get_total_exp(db)
+    
+    # レベル計算ロジック: 100 exp ごとにレベルアップ
+    # 例: 0-99=Lv1, 100-199=Lv2 ...
+    current_level = (total_exp // 100) + 1
+    
+    # 次のレベルまでに必要な経験値
+    next_level_exp_req = current_level * 100
+    progress = total_exp % 100  # 現在のレベルでの進捗 (0-99)
+
+    return {
+        "level": current_level,
+        "total_exp": total_exp,
+        "next_level_exp_req": next_level_exp_req,
+        "progress_percentage": progress  # 0-100%
+    }
+
 # --- 議事録（音声文字起こし）API ---
 @app.post("/upload-audio/")
 async def upload_audio(file: UploadFile = File(...)):

@@ -11,6 +11,13 @@ interface Task {
   exp: number;
 }
 
+interface UserStats {
+  level: number;
+  total_exp: number;
+  next_level_exp_req: number;
+  progress_percentage: number;
+}
+
 interface TranscriptionResult {
   filename: string;
   transcription: string;
@@ -20,22 +27,23 @@ interface TranscriptionResult {
 export default function Home() {
   const API_URL = "http://127.0.0.1:8000";
 
-  // --- State (状態管理) ---
+  // --- State ---
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [stats, setStats] = useState<UserStats | null>(null); // レベル情報
   const [newTaskTitle, setNewTaskTitle] = useState("");
   
-  // 議事録機能用のState
+  // 議事録関連
   const [file, setFile] = useState<File | null>(null);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
-  const [isTaskLoading, setIsTaskLoading] = useState(false);
 
   // --- 初期化 ---
   useEffect(() => {
     fetchTasks();
+    fetchStats();
   }, []);
 
-  // --- タスク関連の関数 ---
+  // --- データ取得 ---
   const fetchTasks = async () => {
     try {
       const res = await fetch(`${API_URL}/tasks/`);
@@ -46,10 +54,20 @@ export default function Home() {
     }
   };
 
+  const fetchStats = async () => {
+    try {
+      const res = await fetch(`${API_URL}/stats/`);
+      const data = await res.json();
+      setStats(data);
+    } catch (error) {
+      console.error("Failed to fetch stats:", error);
+    }
+  };
+
+  // --- アクション ---
   const addTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskTitle) return;
-    setIsTaskLoading(true);
     try {
       await fetch(`${API_URL}/tasks/`, {
         method: "POST",
@@ -60,8 +78,20 @@ export default function Home() {
       fetchTasks();
     } catch (error) {
       console.error("Failed to add task:", error);
-    } finally {
-      setIsTaskLoading(false);
+    }
+  };
+
+  // タスク完了・未完了切り替え
+  const toggleTaskStatus = async (task: Task) => {
+    const newStatus = task.status === "done" ? "todo" : "done";
+    try {
+      await fetch(`${API_URL}/tasks/${task.id}/status?status=${newStatus}`, {
+        method: "PUT",
+      });
+      fetchTasks();
+      fetchStats(); // 経験値が変わるので更新
+    } catch (error) {
+      console.error("Failed to update status:", error);
     }
   };
 
@@ -70,17 +100,14 @@ export default function Home() {
     fetchTasks();
   };
 
-  // --- 議事録関連の関数 ---
+  // 議事録アップロード
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-    }
+    if (e.target.files && e.target.files[0]) setFile(e.target.files[0]);
   };
 
   const uploadAudio = async () => {
     if (!file) return;
     setIsProcessingAudio(true);
-    
     const formData = new FormData();
     formData.append("file", file);
 
@@ -89,135 +116,111 @@ export default function Home() {
         method: "POST",
         body: formData,
       });
-      
-      if (!res.ok) throw new Error("Upload failed");
-      
       const data = await res.json();
       setTranscriptionResult(data);
     } catch (error) {
       console.error("Error uploading audio:", error);
-      alert("処理に失敗しました。Backendが起動しているか確認してください。");
+      alert("処理に失敗しました。");
     } finally {
       setIsProcessingAudio(false);
     }
   };
 
-  // --- レンダリング ---
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
-      <header className="bg-blue-600 text-white p-6 shadow-md">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold">Research Lab DX</h1>
-            <p className="opacity-90 text-sm">研究室・寮運営のための統合プラットフォーム</p>
+      
+      {/* --- ヘッダー & ゲーミフィケーションバー --- */}
+      <header className="bg-white shadow-sm sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 py-4">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold text-slate-800">Research Lab DX</h1>
+            
+            {/* レベル表示バッジ */}
+            {stats && (
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Level</div>
+                  <div className="text-2xl font-black text-blue-600 leading-none">{stats.level}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total EXP</div>
+                  <div className="text-xl font-bold text-slate-700 leading-none">{stats.total_exp}</div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="text-right text-sm">
-             <span className="bg-blue-500 px-3 py-1 rounded-full">Dev Mode</span>
-          </div>
+
+          {/* 経験値プログレスバー */}
+          {stats && (
+            <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden shadow-inner">
+              <div 
+                className="absolute top-0 left-0 h-full bg-gradient-to-r from-blue-400 to-purple-500 transition-all duration-1000 ease-out"
+                style={{ width: `${stats.progress_percentage}%` }}
+              ></div>
+              <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center text-[10px] font-bold text-slate-500 mix-blend-multiply">
+                NEXT LEVEL: {100 - stats.progress_percentage} EXP
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
         
-        {/* 左カラム：議事録生成機能 */}
+        {/* 左カラム：議事録生成 */}
         <section className="space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-blue-600">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-600">
               <span>🎙️</span> 議事録自動生成
             </h2>
-            <p className="text-sm text-slate-500 mb-4">
-              会議の録音データをアップロードすると、AIが文字起こしと要約を行います。
-            </p>
-            
             <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:bg-slate-50 transition">
-              <input 
-                type="file" 
-                accept="audio/*" 
-                onChange={handleFileChange}
-                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
+              <input type="file" accept="audio/*" onChange={handleFileChange} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"/>
             </div>
-
-            <button
-              onClick={uploadAudio}
-              disabled={!file || isProcessingAudio}
-              className="mt-4 w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
-            >
-              {isProcessingAudio ? (
-                <>
-                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  解析中... (これには時間がかかります)
-                </>
-              ) : "解析開始"}
+            <button onClick={uploadAudio} disabled={!file || isProcessingAudio} className="mt-4 w-full bg-purple-600 text-white py-3 rounded-lg font-bold hover:bg-purple-700 transition disabled:opacity-50">
+              {isProcessingAudio ? "AI解析中..." : "解析して要約"}
             </button>
           </div>
 
-          {/* 結果表示エリア */}
           {transcriptionResult && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-fade-in">
               <h3 className="font-bold text-lg mb-3">📝 要約結果</h3>
-              <div className="bg-yellow-50 p-4 rounded-lg text-sm text-slate-700 whitespace-pre-wrap leading-relaxed border border-yellow-100">
-                {transcriptionResult.summary}
-              </div>
-              
-              <details className="mt-4">
-                <summary className="text-xs text-slate-400 cursor-pointer hover:text-blue-500">原文（文字起こし）を見る</summary>
-                <div className="mt-2 p-3 bg-slate-50 rounded text-xs text-slate-500 max-h-40 overflow-y-auto">
-                  {transcriptionResult.transcription}
-                </div>
-              </details>
+              <div className="bg-yellow-50 p-4 rounded-lg text-sm whitespace-pre-wrap">{transcriptionResult.summary}</div>
             </div>
           )}
         </section>
 
-        {/* 右カラム：タスク管理機能 */}
+        {/* 右カラム：タスク管理（ゲーミフィケーション付き） */}
         <section className="space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-green-600">
-              <span>✅</span> タスク管理
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-blue-600">
+              <span>🚀</span> タスク＆クエスト
             </h2>
             
             <form onSubmit={addTask} className="flex gap-2 mb-6">
-              <input
-                type="text"
-                value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
-                placeholder="新しいタスク..."
-                className="flex-1 p-2 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-              <button 
-                type="submit" 
-                disabled={isTaskLoading}
-                className="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 transition"
-              >
-                +
-              </button>
+              <input type="text" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="新しいクエストを追加..." className="flex-1 p-2 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 transition">+</button>
             </form>
 
-            <div className="space-y-3 max-h-[500px] overflow-y-auto">
+            <div className="space-y-3">
               {tasks.map((task) => (
-                <div key={task.id} className="group bg-white border border-slate-200 p-3 rounded-lg flex justify-between items-center hover:shadow-md transition">
-                  <div>
-                    <div className="font-semibold text-slate-800">{task.title}</div>
-                    <div className="text-xs text-slate-400 mt-1 flex gap-2">
-                      <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 uppercase">{task.status}</span>
-                      <span className="text-yellow-600">★ {task.exp} EXP</span>
+                <div key={task.id} className={`p-3 rounded-lg flex justify-between items-center transition border ${task.status === "done" ? "bg-slate-50 border-slate-100" : "bg-white border-slate-200 shadow-sm hover:shadow-md"}`}>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => toggleTaskStatus(task)}
+                      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${task.status === "done" ? "bg-blue-500 border-blue-500 text-white" : "border-slate-300 hover:border-blue-500"}`}
+                    >
+                      {task.status === "done" && "✓"}
+                    </button>
+                    <div>
+                      <div className={`font-semibold ${task.status === "done" ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                        {task.title}
+                      </div>
+                      <div className="text-xs text-slate-400">報酬: {task.exp} EXP</div>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => deleteTask(task.id)}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition px-2"
-                  >
-                    🗑️
-                  </button>
+                  <button onClick={() => deleteTask(task.id)} className="text-slate-300 hover:text-red-500 px-2">×</button>
                 </div>
               ))}
-              {tasks.length === 0 && (
-                <p className="text-center text-slate-400 py-4 text-sm">タスクはありません</p>
-              )}
             </div>
           </div>
         </section>
