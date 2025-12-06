@@ -7,12 +7,14 @@
 
 # --- Backend (Python) ---
 backend/venv/
+backend/.venv/       
 backend/__pycache__/
 backend/*.pyc
 backend/*.pyo
 backend/*.pyd
 backend/.db
 backend/*.sqlite3
+backend/db.sqlite3   
 backend/.pytest_cache/
 backend/temp_uploads/
 
@@ -24,7 +26,6 @@ frontend/build/
 frontend/dist/
 frontend/.vercel/
 frontend/*.tsbuildinfo
-frontend/next-env.d.ts
 frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
