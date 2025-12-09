@@ -74,7 +74,8 @@ const playSound = (type: "success" | "drop" | "pop" | "cancel") => {
 };
 
 export default function Home() {
-  const API_URL = "http://127.0.0.1:8000";
+  // 変更点: 環境変数からURLを読み込み、なければローカル用を使う
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
