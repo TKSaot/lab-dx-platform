@@ -91,6 +91,36 @@ export default function Home() {
   
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const copyProofreadText = async () => {
+    const text = transcriptionResult?.summary ?? "";
+    if (!text.trim()) {
+      toast.error("コピーする文章がありません");
+      return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+
+      playSound("pop");
+      toast.success("修正後文字起こしをコピーしました");
+    } catch (error) {
+      console.error("Failed to copy:", error);
+      toast.error("コピーに失敗しました");
+    }
+  };
+
   useEffect(() => {
     // 初期データのロード
     const init = async () => {
@@ -454,9 +484,21 @@ export default function Home() {
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                     <h3 className="font-bold text-lg mb-3 border-b pb-2 flex justify-between items-center">
                       <span>{mode === "summary" ? "📝 要約結果" : "✨ 修正結果"}</span>
-                      <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded">
-                        {mode === "summary" ? `Level: ${summaryLevel}` : "Proofread"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {mode === "proofread" && (
+                          <motion.button
+                            whileTap={{ scale: 0.95 }}
+                            onClick={copyProofreadText}
+                            className="text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded border border-slate-200 transition"
+                            title="修正後文字起こしをコピー"
+                          >
+                            📋 コピー
+                          </motion.button>
+                        )}
+                        <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                          {mode === "summary" ? `Level: ${summaryLevel}` : "Proofread"}
+                        </span>
+                      </div>
                     </h3>
                     <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
                       {transcriptionResult.summary}
